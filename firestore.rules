@@ -1,0 +1,45 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function mail() {
+      return request.auth.token.email.lower();
+    }
+    // >>> Replace with the SAME owner email you put in public/index.html (all lowercase) <<<
+    function isOwner() {
+      return signedIn() && mail() == 'pandeyakarshit415@gmail.com';
+    }
+    function isAdmin() {
+      return isOwner() ||
+        (signedIn() && exists(/databases/$(database)/documents/admins/$(mail())));
+    }
+
+    match /complaints/{id} {
+      // Anyone with the complaint ID can check its status; only admins can list all.
+      allow get: if true;
+      allow list: if isAdmin();
+      allow create: if request.resource.data.keys().hasOnly(['id','location','type','desc','reporter','status','created','updated'])
+        && request.resource.data.id == id
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.location is string
+        && request.resource.data.location.size() > 0 && request.resource.data.location.size() <= 100
+        && request.resource.data.type is string && request.resource.data.type.size() <= 60
+        && request.resource.data.desc is string && request.resource.data.desc.size() <= 500
+        && request.resource.data.reporter is string && request.resource.data.reporter.size() <= 80
+        && request.resource.data.created is number && request.resource.data.updated is number;
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updated'])
+        && request.resource.data.status in ['Pending','Progress','Resolved'];
+      allow delete: if isAdmin();
+    }
+
+    // Only the owner manages the admin list. An admin can read only their own entry.
+    match /admins/{email} {
+      allow get: if signedIn() && (isOwner() || mail() == email);
+      allow list, write: if isOwner();
+    }
+  }
+}

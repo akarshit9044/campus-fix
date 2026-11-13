@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campus Fix</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--tx:#1b1f24;--mut:#667085;--bd:#e2e5ea;--ac:#2563eb;--act:#fff;--ok:#16a34a;--wa:#d97706;--er:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1318;--card:#181d24;--tx:#eceff3;--mut:#9aa4b2;--bd:#2a313b;--ac:#5b8def;--act:#0b1020}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:0}h2{font-size:1.1rem;margin:0 0 10px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.sub{color:var(--mut);margin:2px 0 8px}
+nav{display:flex;gap:6px;margin:12px 0;flex-wrap:wrap}
+nav button{flex:1;min-width:90px;padding:10px;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:10px;font:inherit;cursor:pointer}
+nav button.on{background:var(--ac);color:var(--act);border-color:var(--ac)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+label{display:block;font-weight:600;margin:12px 0 4px;font-size:.92rem}
+input,select,textarea{width:100%;padding:10px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+textarea{min-height:90px;resize:vertical}
+.btn{margin-top:14px;padding:12px 16px;border:0;border-radius:10px;background:var(--ac);color:var(--act);font:inherit;font-weight:600;cursor:pointer;width:100%}
+.btn.sm{width:auto;margin:0;padding:6px 10px;font-size:.85rem}
+.btn.alt{background:transparent;color:var(--ac);border:1px solid var(--ac)}
+.btn.red{background:transparent;color:var(--er);border:1px solid var(--er)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:.78rem;font-weight:600;border:1px solid currentColor}
+.Pending{color:var(--wa)}.Progress{color:var(--ac)}.Resolved{color:var(--ok)}
+.item{border-top:1px solid var(--bd);padding:12px 0}.item:first-child{border-top:0}
+.meta{color:var(--mut);font-size:.85rem}
+.note{padding:10px 12px;border-radius:10px;background:var(--bg);border:1px dashed var(--bd);color:var(--mut);font-size:.9rem;margin-bottom:12px}
+.done{border-color:var(--ok)}.done b{font-size:1.3rem;letter-spacing:.04em;color:var(--tx)}
+#qr{margin-top:10px;display:inline-block;padding:10px;background:#fff;border-radius:8px}
+</style>
+</head>
+<body>
+<main>
+<div class="top"><div><h1>🔧 Campus Fix</h1><p class="sub">Spot something broken? Report it in under a minute.</p></div><button class="btn sm alt" id="auth">Staff login</button></div>
+<nav id="nav"></nav>
+<div id="view"></div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import {getFirestore,doc,getDoc,setDoc,updateDoc,deleteDoc,collection,query,orderBy,limit,onSnapshot} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {getAuth,GoogleAuthProvider,signInWithPopup,signOut,onAuthStateChanged} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+// >>> Replace with the Google email you will use as OWNER (also change it in firestore.rules) <<<
+const OWNER_EMAIL = "pandeyakarshit415@gmail.com".toLowerCase();
+
+const app = initializeApp({
+  apiKey: "AIzaSyAHBThGve0_ADZuywsN_sr0J1VODZDmAE8",
+  authDomain: "campus-fix-69.firebaseapp.com",
+  projectId: "campus-fix-69",
+  storageBucket: "campus-fix-69.firebasestorage.app",
+  messagingSenderId: "987350752870",
+  appId: "1:987350752870:web:3380972a4d30ac468757a7"
+});
+const db = getFirestore(app), auth = getAuth(app);
+
+const TYPES=["Fan not working","Light / tube light","AC","Water / tap / leakage","Washroom","Furniture (bench / desk)","Projector / board","Wi-Fi / network","Cleanliness","Other"];
+const STATUS={Pending:"Pending",Progress:"In progress",Resolved:"Resolved"};
+let role="student",user=null,tab="report",items=[],admins=[],last=null,filter="all",unsubC=null,unsubA=null;
+const $=s=>document.querySelector(s);
+const esc=s=>{const d=document.createElement("div");d.textContent=s==null?"":String(s);return d.innerHTML};
+const when=t=>new Date(t).toLocaleString([],{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+const newId=()=>{const c="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";let s="CF-";for(let i=0;i<5;i++)s+=c[Math.floor(Math.random()*c.length)];return s};
+const qLoc=()=>new URLSearchParams(location.search).get("room")||"";
+const isStaff=()=>role==="admin"||role==="owner";
+
+function nav(){
+  const t=[["report","Report"],["track","Track"]];
+  if(isStaff())t.push(["admin","Admin"]);
+  if(role==="owner")t.push(["manage","Manage admins"]);
+  $("#nav").innerHTML=t.map(x=>`<button data-t="${x[0]}" class="${tab===x[0]?"on":""}">${x[1]}</button>`).join("");
+  $("#nav").querySelectorAll("button").forEach(b=>b.onclick=()=>{tab=b.dataset.t;last=null;render()});
+  $("#auth").textContent=user?"Sign out ("+(role==="student"?"not staff":role)+")":"Staff login";
+}
+
+function reportView(){
+  const loc=qLoc();
+  $("#view").innerHTML=`<div class="card">${last?`<div class="note done"><div>Complaint submitted. Your ID:</div><b>${esc(last)}</b><div class="meta">Save this ID to track the status.</div></div>`:""}
+  <h2>Report a problem</h2>
+  <label for="loc">Location</label><input id="loc" maxlength="100" placeholder="e.g. Block B, Room 204" value="${esc(loc)}">
+  ${loc?"":'<div class="meta">Tip: scanning the QR code on the wall fills this in automatically.</div>'}
+  <label for="typ">What is the problem?</label><select id="typ">${TYPES.map(t=>`<option>${esc(t)}</option>`).join("")}</select>
+  <label for="dsc">Details (optional)</label><textarea id="dsc" maxlength="500" placeholder="e.g. Fan makes noise and does not rotate"></textarea>
+  <label for="who">Your name or roll number (optional)</label><input id="who" maxlength="80" placeholder="Leave blank to stay anonymous">
+  <button class="btn" id="go">Submit complaint</button><div id="err" class="meta" style="color:var(--er);margin-top:8px"></div></div>`;
+  $("#go").onclick=async()=>{
+    const location_=$("#loc").value.trim();
+    if(!location_){$("#err").textContent="Please enter the location.";return}
+    const id=newId(),now=Date.now();
+    $("#go").disabled=true;
+    try{
+      await setDoc(doc(db,"complaints",id),{id,location:location_,type:$("#typ").value,desc:$("#dsc").value.trim(),reporter:$("#who").value.trim()||"Anonymous",status:"Pending",created:now,updated:now});
+      last=id;render();
+    }catch(e){$("#go").disabled=false;$("#err").textContent="Could not submit. Check your internet and try again."}
+  };
+}
+
+function card(c,ctl){
+  let h=`<div class="item"><div class="row" style="justify-content:space-between"><b>${esc(c.type)}</b><span class="pill ${esc(c.status)}">${esc(STATUS[c.status]||c.status)}</span></div><div>${esc(c.location)}</div>`;
+  if(c.desc)h+=`<div class="meta">${esc(c.desc)}</div>`;
+  h+=`<div class="meta">${esc(c.id)} · ${esc(c.reporter)} · ${when(c.created)}</div>`;
+  if(ctl)h+='<div class="row" style="margin-top:8px">'+["Pending","Progress","Resolved"].map(s=>`<button class="btn sm ${c.status===s?"":"alt"}" data-id="${esc(c.id)}" data-s="${s}">${STATUS[s]}</button>`).join("")+"</div>";
+  return h+"</div>";
+}
+
+function trackView(){
+  $("#view").innerHTML=`<div class="card"><h2>Track a complaint</h2><label for="tid">Complaint ID</label><div class="row"><input id="tid" placeholder="CF-XXXXX" style="flex:1;min-width:140px;text-transform:uppercase"><button class="btn sm" id="find">Check</button></div><div id="res" style="margin-top:12px"></div></div>`;
+  $("#find").onclick=async()=>{
+    const id=$("#tid").value.trim().toUpperCase();if(!id)return;
+    try{const s=await getDoc(doc(db,"complaints",id));$("#res").innerHTML=s.exists()?card(s.data(),false):'<div class="meta">No complaint found with that ID.</div>'}
+    catch(e){$("#res").innerHTML='<div class="meta">Could not check right now.</div>'}
+  };
+}
+
+function listHtml(){
+  const cnt={Pending:0,Progress:0,Resolved:0};items.forEach(c=>{if(cnt[c.status]!=null)cnt[c.status]++});
+  const list=items.filter(c=>filter==="all"||c.status===filter);
+  const f=[["all","All ("+items.length+")"],["Pending","Pending ("+cnt.Pending+")"],["Progress","In progress ("+cnt.Progress+")"],["Resolved","Resolved ("+cnt.Resolved+")"]];
+  return '<div class="row" style="margin-bottom:8px">'+f.map(x=>`<button class="btn sm ${filter===x[0]?"":"alt"}" data-f="${x[0]}">${x[1]}</button>`).join("")+"</div>"+(list.length?list.map(c=>card(c,true)).join(""):'<div class="meta">No complaints here yet.</div>');
+}
+function paintList(){
+  const el=$("#list");if(!el)return;
+  el.innerHTML=listHtml();
+  el.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{filter=b.dataset.f;paintList()});
+  el.querySelectorAll("[data-s]").forEach(b=>b.onclick=()=>updateDoc(doc(db,"complaints",b.dataset.id),{status:b.dataset.s,updated:Date.now()}).catch(()=>alert("Could not update status.")));
+}
+function adminView(){
+  $("#view").innerHTML=`<div class="card"><h2>Complaints</h2><div id="list"></div></div>
+  <div class="card"><h2>Make a QR code for a wall</h2><div class="meta">Students who scan it open the form with that location filled in.</div>
+  <label for="qloc">Location</label><input id="qloc" placeholder="e.g. Block B Room 204"><button class="btn" id="mkqr">Generate QR</button><div id="qrbox"></div></div>`;
+  paintList();
+  $("#mkqr").onclick=()=>{
+    const l=$("#qloc").value.trim();if(!l)return;
+    const url=location.origin+location.pathname+"?room="+encodeURIComponent(l);
+    $("#qrbox").innerHTML=`<div id="qr"></div><div class="meta" style="word-break:break-all;margin-top:6px">${esc(url)}</div>`;
+    try{new QRCode(document.getElementById("qr"),{text:url,width:200,height:200})}catch(e){}
+  };
+}
+
+function paintAdmins(){
+  const el=$("#alist");if(!el)return;
+  el.innerHTML=admins.length?admins.map(a=>`<div class="item row" style="justify-content:space-between"><span>${esc(a.email)}</span><button class="btn sm red" data-rm="${esc(a.email)}">Remove</button></div>`).join(""):'<div class="meta">No admins added yet. Only you (owner) have access right now.</div>';
+  el.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>{if(confirm("Remove "+b.dataset.rm+" from admins?"))deleteDoc(doc(db,"admins",b.dataset.rm))});
+}
+function manageView(){
+  $("#view").innerHTML=`<div class="card"><h2>Manage admins</h2><div class="meta">Only you can add or remove admins. They log in with this Google email.</div>
+  <label for="aem">Admin’s Google email</label><div class="row"><input id="aem" type="email" placeholder="name@gmail.com" style="flex:1;min-width:160px"><button class="btn sm" id="addA">Add admin</button></div><div id="amsg" class="meta" style="margin-top:6px"></div></div>
+  <div class="card"><h2>Current admins</h2><div id="alist"></div></div>`;
+  paintAdmins();
+  $("#addA").onclick=async()=>{
+    const e=$("#aem").value.trim().toLowerCase();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)){$("#amsg").textContent="Enter a valid email.";return}
+    try{await setDoc(doc(db,"admins",e),{email:e,addedAt:Date.now()});$("#aem").value="";$("#amsg").textContent="Added."}
+    catch(x){$("#amsg").textContent="Could not add. Are you logged in as owner?"}
+  };
+}
+
+function render(){
+  nav();
+  if(tab==="admin"&&isStaff())adminView();
+  else if(tab==="manage"&&role==="owner")manageView();
+  else if(tab==="track")trackView();
+  else{tab="report";nav();reportView()}
+}
+
+$("#auth").onclick=async()=>{
+  if(user){await signOut(auth);return}
+  try{await signInWithPopup(auth,new GoogleAuthProvider())}catch(e){}
+};
+
+onAuthStateChanged(auth,async u=>{
+  user=u;role="student";
+  if(unsubC){unsubC();unsubC=null}if(unsubA){unsubA();unsubA=null}items=[];admins=[];
+  if(u&&u.email){
+    const em=u.email.toLowerCase();
+    if(em===OWNER_EMAIL)role="owner";
+    else{try{if((await getDoc(doc(db,"admins",em))).exists())role="admin"}catch(e){}}
+  }
+  if(isStaff()){
+    unsubC=onSnapshot(query(collection(db,"complaints"),orderBy("created","desc"),limit(500)),s=>{items=s.docs.map(d=>d.data());paintList()});
+  }
+  if(role==="owner"){
+    unsubA=onSnapshot(collection(db,"admins"),s=>{admins=s.docs.map(d=>d.data());paintAdmins()});
+  }
+  if(!isStaff()&&(tab==="admin"||tab==="manage"))tab="report";
+  render();
+});
+render();
+</script>
+</body>
+</html>
